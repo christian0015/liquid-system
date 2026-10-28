@@ -127,8 +127,24 @@ void main() {
     vec2 dq = vec2(vUv.x, clamp(docY / max(uDocH, 1.0), 0.0, 1.0)) - 0.5;
     float t = clamp(dot(dq, vec2(cos(uAngle), sin(uAngle))) + 0.5, 0.0, 1.0);
     col = mix(uC1, uC2, t);
+  } else if (uMode == 3) {
+    col = uBg;  // fond uni : noir / blanc cassé, ou couleur personnalisée
   } else {
-    col = uBg;  // fond uni : noir (thème sombre) ou blanc cassé (thème clair)
+    float vign = smoothstep(1.3, 0.0, length(q * vec2(0.8, 1.0)));
+    col = mix(uBg, uBg2, vign * 0.8);
+    float k = mix(0.3, 0.13, uDark);
+    col += uGlueC * smoothstep(0.8, 0.0, length(q - vec2(-0.4 * asp, -0.3))) * k;
+    col += uGlowC * smoothstep(0.7, 0.0, length(q - vec2(0.45 * asp, -0.05))) * k * 0.7;
+    col += uGlassC * smoothstep(0.85, 0.0, length(q - vec2(0.05, 0.55))) * k * 0.55;
+    // Faisceaux de lumière nets et obliques (matière à réfracter), teintés par le thème.
+    float d1 = q.x * 0.82 + q.y * 0.57;
+    float s1 = smoothstep(0.035, 0.0, 0.5 - abs(fract(d1 * 1.5 + 0.12) - 0.5));
+    float s2 = smoothstep(0.012, 0.0, 0.5 - abs(fract(d1 * 3.3 + 0.57) - 0.5));
+    float s3 = smoothstep(0.12, 0.0, 0.5 - abs(fract(d1 * 0.8 + 0.3) - 0.5)) * 0.35;
+    vec3 warm = mix(uGlueC, uGlowC, 0.5) * 1.2;
+    vec3 cool = uGlassC;
+    col += (cool * s1 + warm * s2 * 0.8 + cool * s3) * mix(0.1, 0.2, uDark);
+    col += (vnoise(q * 3.0 + 4.0) - 0.5) * 0.02;
   }
   col += (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
   o = vec4(col, 1.0);
@@ -171,6 +187,8 @@ uniform vec3 uGlow;
 uniform vec4 uMatA;     // glue, glow, refraction, dispersion
 uniform vec4 uMatB;     // specular, fresnel, thickness, grain
 uniform vec4 uMatC;     // frost, iridescence, alpha, variant (0 plat, 1 relief, 2 creux)
+uniform vec4 uMatD;     // brightness (luminosité), -, -, -
+uniform float uSeed;    // graine propre à l'élément : phases et vitesses décalées
 uniform vec4 uPtr;      // x, y, creux, appui
 uniform vec4 uRip;      // x, y, temps depuis l'impact, amplitude
 uniform sampler2D uBack;
@@ -233,7 +251,7 @@ float profile(float d, float bw, float th, float e) {
 }
 // Écoulement visqueux, lent : n'agit qu'à l'intérieur (les bords restent fixes).
 float flowH(vec2 px, float amp, float mask) {
-  float t = uTime * 0.09;
+  float t = uTime * 0.09 * (0.8 + 0.4 * uSeed) + uSeed * 21.0;
   float n = vnoise(px * 0.012 + vec2(t, -t * 0.8)) + 0.55 * vnoise(px * 0.029 - vec2(t * 0.9, t * 1.2)) - 0.78;
   return amp * mask * n;
 }
@@ -317,8 +335,11 @@ void main() {
     float lens = smoothstep(0.03, 0.5, 1.0 - n.z);
     float refr = uMatA.z, disp = uMatA.w * (variant < 0.5 ? 0.4 : 1.0);
     float frost = uMatC.x;
-    float ang = uTime * 0.16 * uAmb;
-    float tOil = uTime * 0.05 * uAmb;
+    // Chaque élément a sa propre phase, sa vitesse et son sens : rien ne pulse en même temps.
+    float sp = 0.7 + 0.6 * uSeed;
+    float dirS = uSeed > 0.5 ? 1.0 : -1.0;
+    float ang = dirS * (uTime * 0.16 * uAmb * sp) + uSeed * 6.2831;
+    float tOil = uTime * 0.05 * uAmb * sp + uSeed * 37.0;
 
     // Transmission : le fond est réfracté, avec une dispersion prononcée par canal.
     vec2 off = -n.xy * th * refr * 2.2;
@@ -342,10 +363,14 @@ void main() {
     }
 
     // Corps : verre clair ; le gluant est teinté en volume (plus dense au centre).
+    float lightG = 0.35 + 1.3 * uMatD.x;   // luminosité : réglage à part, indépendant du gluant
     vec3 liquid = mix(uGlass, uGlue, clamp(glue * 1.1, 0.0, 1.0));
-    float absorb = mix(0.03, 0.55, glue) * (0.3 + 0.7 * depth) + (variant > 1.5 ? 0.05 : 0.0);
-    vec3 body = mix(tr, liquid * mix(0.5, 0.85, 1.0 - uDark * 0.4), absorb);
-    body = mix(body, mix(uBg, uBg2, 0.35), mix(0.08, 0.14, uDark) * (1.0 - glue * 0.4));
+    float lumL = max(dot(liquid, vec3(0.2126, 0.7152, 0.0722)), 0.02);
+    // La luminance de la teinte est fixée par la luminosité ; le gluant ne change que sa teinte et sa densité.
+    vec3 liquidN = liquid / lumL * mix(0.55 + 0.35 * uMatD.x, 0.08 + 0.3 * uMatD.x, uDark);
+    float absorb = mix(0.08, 0.4, glue) * (0.3 + 0.7 * depth) + (variant > 1.5 ? 0.05 : 0.0);
+    vec3 body = mix(tr, liquidN, absorb);
+    body = mix(body, mix(uBg, uBg2, 0.35), mix(0.08, 0.14, uDark));
 
     // Réflexions du banc d'optique (franges séparées par canal).
     vec3 rf = reflect(vec3(0.0, 0.0, -1.0), n);
@@ -359,12 +384,12 @@ void main() {
     // Gloss visqueux : deux lobes dont la lumière dérive ; suit le pointeur au survol.
     float hov = clamp(uPtr.z * 1.6 + uPtr.w * 0.5, 0.0, 1.0);
     vec2 toP = (uPtr.xy - vPx) / max(max(uBox.z, uBox.w), 40.0);
-    vec2 drift = uAmb * vec2(sin(uTime * 0.23), cos(uTime * 0.17)) * 0.3;
+    vec2 drift = uAmb * vec2(sin(uTime * 0.23 * sp + uSeed * 6.28), cos(uTime * 0.17 * sp + uSeed * 9.1)) * 0.3;
     vec3 L1 = normalize(mix(vec3(-0.5 + drift.x, -0.6 + drift.y, 0.66), vec3(toP * 1.4, 0.75), hov));
     vec3 H1 = normalize(L1 + vec3(0.0, 0.0, 1.0));
     vec3 L2 = normalize(vec3(0.55 - drift.y, 0.5, 0.7));
     vec3 H2 = normalize(L2 + vec3(0.0, 0.0, 1.0));
-    float wet = (pow(max(dot(n, H1), 0.0), 110.0) * 1.5 + pow(max(dot(n, H1), 0.0), 16.0) * 0.2 + pow(max(dot(n, H2), 0.0), 60.0) * 0.4) * (0.15 + glue * 1.15) * uMatB.x;
+    float wet = (pow(max(dot(n, H1), 0.0), mix(70.0, 150.0, glue)) * 1.5 + pow(max(dot(n, H1), 0.0), 16.0) * 0.2 + pow(max(dot(n, H2), 0.0), 60.0) * 0.4) * 0.6 * uMatB.x;
 
     // Huile sur l'eau : film mince visqueux, bandes colorées aux couleurs du thème qui dérivent lentement.
     float irid = uMatC.y;
@@ -377,11 +402,11 @@ void main() {
 
     // Sombre : la lumière s'ajoute sur le noir. Clair : le verre filtre le blanc cassé.
     // Lumière ajoutée (compressée en douceur : pas de blanc écrasé, les teintes de dispersion restent saturées).
-    vec3 addD = envT * lens * refr * 0.85 + spec * 0.75 + vec3(wet) + filmC * filmW * 0.6;
+    vec3 addD = (envT * lens * refr * 0.85 + spec * 0.75 + vec3(wet) + filmC * filmW * 0.6) * lightG;
     vec3 colD = body + (1.0 - exp(-addD * 1.35));
-    vec3 colL = body * mix(vec3(1.0), envT, clamp(lens * refr * 1.0, 0.0, 1.0));
-    colL = mix(colL, env, clamp(specK * 0.4, 0.0, 0.8));
-    colL *= mix(vec3(1.0), mix(vec3(1.0), filmC, 0.85), clamp(filmW * 0.7, 0.0, 0.6));
+    vec3 colL = body * mix(vec3(1.0), envT, clamp(lens * refr * lightG, 0.0, 1.0));
+    colL = mix(colL, env, clamp(specK * 0.4 * lightG, 0.0, 0.8));
+    colL *= mix(vec3(1.0), mix(vec3(1.0), filmC, 0.85), clamp(filmW * 0.7 * lightG, 0.0, 0.6));
     colL = colL * (1.0 - 0.22 * lens) + vec3(wet) * 0.3 - vec3(dust) * 0.2;
     col = mix(colL, colD, uDark);
     col += mix(0.0, 1.0, uDark) * (dust * 0.5 + scr * 0.14 * (0.3 + fres));

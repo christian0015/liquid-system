@@ -42,6 +42,8 @@ export type MatterProps = {
   grain?: number;
   frost?: number;
   iridescence?: number;
+  /** Luminosité de la matière (indépendante du gluant). */
+  brightness?: number;
   thickness?: number;
   shape?: ShapeInput;
   radius?: number | Radii;
@@ -75,7 +77,7 @@ export type SurfaceProps = MatterProps &
   };
 
 const MATTER_KEYS = [
-  'tint', 'glue', 'glow', 'dispersion', 'refraction', 'specular', 'fresnel', 'grain', 'frost', 'iridescence',
+  'tint', 'glue', 'glow', 'dispersion', 'refraction', 'specular', 'fresnel', 'grain', 'frost', 'iridescence', 'brightness',
   'thickness', 'shape', 'radius', 'speed', 'reactive', 'disabled', 'haptics', 'audioUi',
 ] as const;
 
@@ -109,6 +111,7 @@ export function useMaterial(p: MatterProps) {
     grain: p.grain ?? light.grain,
     frost: p.frost ?? light.frost,
     iridescence: p.iridescence ?? light.iridescence,
+    brightness: p.brightness ?? material.brightness,
   };
   const colors = useMemo(() => resolveTint(theme, p.tint), [theme, p.tint]);
   return {

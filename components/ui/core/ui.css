@@ -13,6 +13,8 @@
 .lq-root {
   display: contents;
   color: var(--lq-ink);
+  font-family: var(--lq-font-body, system-ui, sans-serif);
+  font-weight: var(--lq-body-weight, 500);
   transition:
     --lq-bg 0.4s ease, --lq-bg2 0.4s ease, --lq-surface 0.4s ease, --lq-ink 0.4s ease,
     --lq-ink-soft 0.4s ease, --lq-glue 0.4s ease, --lq-glass 0.4s ease, --lq-glow 0.4s ease;
@@ -28,8 +30,15 @@ body { position: relative; }
 .lq-canvas-top { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; display: block; z-index: 999; }
 
 .lq-backdrop { position: fixed; inset: 0; z-index: -2; pointer-events: none; background: var(--lq-bg); }
+.lq-backdrop[data-bg='theme'] {
+  background:
+    radial-gradient(70% 60% at 18% 12%, color-mix(in oklab, var(--lq-glue) 16%, transparent), transparent 70%),
+    radial-gradient(60% 55% at 88% 30%, color-mix(in oklab, var(--lq-glow) 8%, transparent), transparent 70%),
+    radial-gradient(80% 60% at 50% 105%, color-mix(in oklab, var(--lq-glass) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--lq-bg2), var(--lq-bg));
+}
 
-.lq-portal { position: fixed; inset: 0; z-index: 1000; pointer-events: none; color: var(--lq-ink); }
+.lq-portal { position: fixed; inset: 0; z-index: 1000; pointer-events: none; color: var(--lq-ink); font-family: var(--lq-font-body, system-ui, sans-serif); font-weight: var(--lq-body-weight, 500); }
 
 /* ---- Repli CSS de la matière (rendu serveur, sans WebGL2) : remplacé en fondu par le canvas ----- */
 
@@ -160,7 +169,7 @@ html:not([data-lq-gl]) .lq-tab[aria-selected='true'] { background: color-mix(in 
 
 .lq-alert { width: min(430px, calc(100vw - 32px)); padding: 26px 26px 22px; }
 .lq-alert-head { display: flex; align-items: center; gap: 12px; }
-.lq-alert-title { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 650; letter-spacing: -0.01em; }
+.lq-alert-title { margin: 0; font-family: var(--lq-font-title, inherit); font-style: var(--lq-title-style, normal); font-weight: var(--lq-title-weight, 600); font-size: calc(22px * var(--lq-title-scale, 1)); line-height: 1.2; letter-spacing: 0; }
 .lq-alert-body { margin-top: 10px; color: var(--lq-ink-soft); line-height: 1.55; font-size: 15px; }
 .lq-alert-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
 .lq-tone-icon { flex: none; }

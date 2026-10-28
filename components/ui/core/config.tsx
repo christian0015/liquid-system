@@ -24,9 +24,14 @@ export type SoundName = 'pop' | 'ooze' | 'merge' | 'snap' | 'tick' | 'soft-alert
 export type Tint = Color | { glue?: Color; glass?: Color; glow?: Color };
 
 export type UIConfig = {
+  /** Interrupteur du système liquide. `false` : rendu CSS simple. Aucune autre désactivation automatique n'existe. */
+  enabled: boolean;
   theme: {
     base: Color;
     mode: 'auto' | 'light' | 'dark';
+    /** Fond de l'application : couleur du thème (défaut), noir / blanc cassé, ou couleur personnalisée. */
+    background: 'theme' | 'neutral' | 'custom';
+    backgroundColor?: Color;
     accent?: Color;
     glue?: Color;
     glass?: Color;
@@ -34,10 +39,25 @@ export type UIConfig = {
   };
   fluidity: { min: number; max: number };
   material: {
+    /** Viscosité et relief en coussin (n'influence pas la luminosité). */
     glue: number;
+    /** Halo lumineux, sans couleur propre : blanc teinté de la couleur du thème. */
     glow: number;
     reactive: number;
+    /** Luminosité de la matière : intensité de la lumière, indépendante du gluant. */
+    brightness: number;
     radius: Radius;
+  };
+  typography: {
+    /** `font-family` des titres. */
+    title: string;
+    titleStyle: 'normal' | 'italic';
+    titleWeight: number;
+    /** Multiplicateur de taille des titres (les polices manuscrites sont plus petites à corps égal). */
+    titleScale: number;
+    /** `font-family` du texte courant. */
+    body: string;
+    bodyWeight: number;
   };
   light: {
     refraction: number;
@@ -61,23 +81,32 @@ export type DeepPartial<T> = {
 };
 
 export const DEFAULT_CONFIG: UIConfig = {
-  theme: { base: '#2f4b8a', mode: 'auto' },
+  enabled: true,
+  theme: { base: '#2f4b8a', mode: 'auto', background: 'theme' },
   fluidity: { min: 0.7, max: 1.3 },
-  material: { glue: 0.5, glow: 0.12, reactive: 0.7, radius: 24 },
+  material: { glue: 0.18, glow: 0.12, reactive: 0.7, brightness: 0.5, radius: 47 },
+  typography: {
+    title: 'Georgia, "Times New Roman", serif',
+    titleStyle: 'italic',
+    titleWeight: 500,
+    titleScale: 1,
+    body: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+    bodyWeight: 500,
+  },
   light: {
-    refraction: 0.8,
+    refraction: 0.49,
     dispersion: 1,
-    specular: 0.9,
+    specular: 0.09,
     fresnel: 0.5,
-    thickness: 16,
+    thickness: 18,
     grain: 0.08,
     frost: 0.15,
-    iridescence: 0.55,
+    iridescence: 1,
     environment: 'studio',
   },
   /** `ambient` : mouvement continu de la matière au repos (0 = figé, 1 = marqué). Bordures fixes. */
-  motion: { appear: 'random', respectReducedMotion: true, ambient: 0.55 },
-  quality: { maxDpr: 2, margin: 160, adaptive: true },
+  motion: { appear: 'random', respectReducedMotion: false, ambient: 0.55 },
+  quality: { maxDpr: 2, margin: 160, adaptive: false },
   haptics: { enabled: false, intensity: 0.5 },
   audioUi: { enabled: false, volume: 0.4 },
 };
@@ -183,6 +212,8 @@ function ensureContrast(c: RGB, bg: RGB, min: number): RGB {
 
 export type ResolvedTheme = {
   mode: 'light' | 'dark';
+  /** Type de fond effectivement appliqué. */
+  bgKind: 'theme' | 'neutral' | 'custom';
   base: RGB;
   bg: RGB;
   bg2: RGB;
@@ -202,23 +233,39 @@ export function deriveTheme(theme: UIConfig['theme'], normalize?: (c: string) =>
   };
   const base = read(theme.base, parseColor(DEFAULT_CONFIG.theme.base) as RGB);
   const [h, s] = rgbToHsl(base);
-  const mode = theme.mode === 'auto' ? (luminance(base) < 0.36 ? 'dark' : 'light') : theme.mode;
+  // Fond : couleur du thème (défaut), noir / blanc cassé, ou couleur personnalisée.
+  const custom = theme.background === 'custom' && theme.backgroundColor ? parseColor(theme.backgroundColor) ?? normalize?.(theme.backgroundColor) ?? null : null;
+  const bgKind: ResolvedTheme['bgKind'] = theme.background === 'custom' && custom ? 'custom' : theme.background === 'neutral' ? 'neutral' : 'theme';
+  // En mode auto, le texte suit la luminance du fond choisi (le fond personnalisé prime sur la base).
+  const modeRef = bgKind === 'custom' && custom ? custom : base;
+  const mode = theme.mode === 'auto' ? (luminance(modeRef) < 0.36 ? 'dark' : 'light') : theme.mode;
   const dark = mode === 'dark';
   const sat = clamp(s, 0.25, 0.95);
 
-  // Fond d'application : noir (thème sombre) ou blanc cassé (thème clair), très légèrement teinté par la base.
-  const bg = dark ? hslToRgb(h, 0.12, 0.018) : hslToRgb(h, 0.1, 0.945);
-  const bg2 = dark ? hslToRgb(h, 0.14, 0.05) : hslToRgb(h, 0.1, 0.9);
+  let bg: RGB;
+  let bg2: RGB;
+  if (bgKind === 'custom' && custom) {
+    bg = custom;
+    bg2 = mixRgb(custom, dark ? [1, 1, 1] : [0, 0, 0], 0.07);
+  } else if (bgKind === 'neutral') {
+    bg = dark ? hslToRgb(h, 0.12, 0.018) : hslToRgb(h, 0.1, 0.945);
+    bg2 = dark ? hslToRgb(h, 0.14, 0.05) : hslToRgb(h, 0.1, 0.9);
+  } else {
+    bg = dark ? hslToRgb(h, clamp(s, 0, 0.55), 0.065) : hslToRgb(h, clamp(s, 0, 0.45), 0.95);
+    bg2 = dark ? hslToRgb(h, clamp(s, 0.2, 0.8), 0.17) : hslToRgb(h + 12, clamp(s, 0.2, 0.7), 0.86);
+  }
   const surface = dark ? mixRgb(bg, [1, 1, 1], 0.07) : mixRgb(bg, [1, 1, 1], 0.55);
 
   const accent = theme.accent ? read(theme.accent, base) : undefined;
   const glueDefault = hslToRgb(h, clamp(sat, 0.5, 0.95), dark ? 0.58 : 0.5);
   const glassDefault = hslToRgb(h + 18, clamp(sat * 0.7, 0.2, 0.8), dark ? 0.74 : 0.62);
-  const glowDefault = accent ?? hslToRgb(h + 28, clamp(sat + 0.1, 0.4, 1), dark ? 0.64 : 0.55);
+  // Le glow n'a pas de couleur propre : un blanc teinté de la couleur du thème (ou l'intensité de la même couleur).
+  const glowDefault = accent ?? (dark ? hslToRgb(h, clamp(sat * 0.4, 0.12, 0.5), 0.82) : hslToRgb(h, clamp(sat * 0.8, 0.3, 0.9), 0.45));
 
   const inkRaw = dark ? hslToRgb(h, 0.25, 0.95) : hslToRgb(h, 0.35, 0.1);
   // Référence de contraste : le fond éclairé par les lueurs du backdrop et le verre (pire cas courant).
-  const ref = mixRgb(bg, glueDefault, dark ? 0.14 : 0.1);
+  const lift = bgKind === 'theme' ? (dark ? 0.3 : 0.2) : dark ? 0.12 : 0.08;
+  const ref = mixRgb(bg, glueDefault, lift);
   const ink = ensureContrast(inkRaw, ref, 7);
   const inkSoft = ensureContrast(mixRgb(ink, ref, 0.3), ref, 4.5);
 
@@ -227,6 +274,7 @@ export function deriveTheme(theme: UIConfig['theme'], normalize?: (c: string) =>
 
   return {
     mode,
+    bgKind,
     base,
     bg,
     bg2,
@@ -308,7 +356,7 @@ function domNormalize(c: string): RGB | null {
 }
 
 /** Variables CSS du thème (utilisées par UIProvider et par les portails, qui sortent du `.lq-root`). */
-export function themeVars(theme: ResolvedTheme, radius: UIConfig['material']['radius']): CSSProperties {
+export function themeVars(theme: ResolvedTheme, radius: UIConfig['material']['radius'], typo: UIConfig['typography']): CSSProperties {
   const css = (c: RGB) => rgbToCss(c);
   return {
     '--lq-bg': css(theme.bg),
@@ -320,6 +368,12 @@ export function themeVars(theme: ResolvedTheme, radius: UIConfig['material']['ra
     '--lq-glass': css(theme.glass),
     '--lq-glow': css(theme.glow),
     '--lq-radius': `${Array.isArray(radius) ? Math.max(0, radius[0]) : Math.max(0, radius)}px`,
+    '--lq-font-title': typo.title,
+    '--lq-title-style': typo.titleStyle,
+    '--lq-title-weight': typo.titleWeight,
+    '--lq-title-scale': typo.titleScale,
+    '--lq-font-body': typo.body,
+    '--lq-body-weight': typo.bodyWeight,
   } as CSSProperties;
 }
 
@@ -381,7 +435,7 @@ export function UIProvider({
     [registerHost, merged, setConfig, resetConfig, theme, reducedMotion],
   );
 
-  const vars = { ...themeVars(theme, merged.material.radius), ...style } as CSSProperties;
+  const vars = { ...themeVars(theme, merged.material.radius, merged.typography), ...style } as CSSProperties;
 
   return (
     <UIContext.Provider value={value}>
@@ -417,5 +471,5 @@ export const useUIContext = useCtx;
 /** Variables CSS du thème courant, pour les portails. */
 export function useThemeVars(): { vars: CSSProperties; mode: 'light' | 'dark' } {
   const { theme, config } = useCtx();
-  return { vars: themeVars(theme, config.material.radius), mode: theme.mode };
+  return { vars: themeVars(theme, config.material.radius, config.typography), mode: theme.mode };
 }

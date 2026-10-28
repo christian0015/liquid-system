@@ -392,15 +392,31 @@ Cette section est la **référence d'usage** : Claude Code la complète avec la 
 
 ---
 
-## Variante « Prisme »
+## Variante « Prisme » (version 2)
 
-Copie de la v2 avec un autre rendu de matière. Le moteur (bande de canvas dans le document, redessin partiel, mouvement ambiant) est inchangé.
+Copie de la v2 avec un autre rendu de matière et de nouveaux réglages. Moteur inchangé dans son principe (bande de canvas dans le document, redessin partiel, mouvement ambiant).
 
-- **Fond d'application** : noir (thème sombre) ou blanc cassé (thème clair), uni, selon `theme.mode`. Le fond uni ne donne rien à réfracter : l'aspect vient de la lumière de l'environnement.
-- **Lentille de verre** : intérieur clair, bords réfractifs avec dispersion prononcée (trois indices de réfraction), bandes lumineuses franches, comme une lentille de banc d'optique. Sur fond clair, le verre filtre la lumière au lieu de l'ajouter.
-- **Huile sur l'eau** : un film mince visqueux (bandes d'interférence) dérive lentement à l'intérieur ; les bordures restent fixes. Réglage : `light.iridescence` (0 = aucun film) et `motion.ambient` (vitesse/présence du mouvement).
-- **Couleurs** : les bandes de lumière, les franges et le film d'huile sont dérivés de la couleur du thème (`theme.base`, `theme.accent`, `glue`, `glass`, `glow`) : un thème personnalisé recolore tout.
-- Défauts changés : `dispersion: 1`, `refraction: 0.8`, `iridescence: 0.55`, `frost: 0.15`, `thickness: 16`, `glow: 0.12`.
+**Réglages par défaut** : ceux que vous avez validés (gluant 0.18, glow 0.12, réactivité 0.70, rayon 47, réfraction 0.49, dispersion 1, reflets 0.09, Fresnel 0.50, épaisseur 18, grain 0.08, dépoli 0.15, huile sur l'eau 1).
+
+**Matière**
+- `material.glue` : viscosité et relief en coussin. **N'influence plus la luminosité.**
+- `material.brightness` (nouveau, défaut 0.5) : luminosité de la matière, réglage à part. Prop de composant `brightness`.
+- `material.glow` : halo **sans couleur propre** (blanc teinté de la couleur du thème). Pour imposer une autre teinte : `theme.accent` ou `theme.glow`.
+- Lentille de verre à forte dispersion, film « huile sur l'eau » visqueux aux couleurs du thème, bordures fixes.
+- Chaque élément a sa propre phase, sa vitesse et son sens de rotation de la lumière : plus de pulsation simultanée.
+
+**Arrière-plan** (`theme.background`)
+- `'theme'` (défaut) : fond de la couleur du thème, avec lueurs et faisceaux.
+- `'neutral'` : noir (thème sombre) ou blanc cassé (thème clair).
+- `'custom'` + `theme.backgroundColor` : couleur de votre choix ; le texte s'adapte à sa luminosité.
+- `theme.mode` reste `auto | light | dark` (en auto, le mode est déduit de la base, ou du fond personnalisé).
+
+**Typographie** (`typography`) : `title`, `titleStyle`, `titleWeight`, `titleScale`, `body`, `bodyWeight`. La démo propose 8 polices calligraphiques pour les titres (Parisienne par défaut) et 6 polices sans-serif en graisse medium pour le texte (Inter par défaut), choisissables dans `/preferences` (polices chargées par `next/font/google`, voir `app/fonts.ts`).
+
+**Application forcée**
+- Plus de désactivation automatique : `motion.respectReducedMotion` vaut `false` et `quality.adaptive` vaut `false` par défaut, et ces deux réglages ne sont plus proposés dans l'interface. Ils restent disponibles dans la config (`respectReducedMotion: true` coupe le mouvement ambiant quand le système demande moins d'animations ; c'est un point d'accessibilité à connaître).
+- `enabled` (nouveau, défaut `true`) : le seul interrupteur. `false` : rendu CSS simple.
+- Si le navigateur perd le contexte WebGL, le rendu CSS prend le relais, puis le canvas est recréé automatiquement (jusqu'à 6 essais).
 
 ## Notes d'implémentation (v2, valables pour cette variante)
 

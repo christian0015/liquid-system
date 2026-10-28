@@ -1,29 +1,37 @@
 import type { Metadata, Viewport } from 'next';
-import { Instrument_Sans, JetBrains_Mono } from 'next/font/google';
 import { UIProvider, Backdrop } from '@/components/ui';
 import '@/components/ui/core/ui.css';
 import './globals.css';
-
-// Typographie choisie pour le sujet : une grotesque nette pour l'interface, une mono pour les chiffres de rendu.
-const sans = Instrument_Sans({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
-const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono', display: 'swap' });
+import { DEFAULT_BODY, DEFAULT_TITLE, fontVariables } from './fonts';
 
 export const metadata: Metadata = {
   title: 'Lumen — console de rendu',
-  description: 'Démonstration du kit Liquid UI : verre à dispersion, gluant et glow.',
+  description: 'Démonstration du kit Liquid UI : verre à dispersion, gluant et huile sur l’eau.',
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#050507',
+  themeColor: '#0b0d12',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={`${sans.variable} ${mono.variable}`}>
+    <html lang="fr" className={fontVariables}>
       <body>
-        <UIProvider config={{ theme: { base: '#2f4b8a', accent: '#ff9a4d' } }}>
+        <UIProvider
+          config={{
+            theme: { base: '#2f4b8a' },
+            typography: {
+              title: DEFAULT_TITLE.family,
+              titleStyle: DEFAULT_TITLE.style,
+              titleWeight: DEFAULT_TITLE.weight,
+              titleScale: DEFAULT_TITLE.scale,
+              body: DEFAULT_BODY.family,
+              bodyWeight: DEFAULT_BODY.weight,
+            },
+          }}
+        >
           <Backdrop />
           {children}
         </UIProvider>

@@ -31,6 +31,7 @@ export type Material = {
   grain: number;
   frost: number;
   iridescence: number;
+  brightness: number;
 };
 
 export type ItemFrame = {
@@ -54,6 +55,8 @@ export type ItemFrame = {
 };
 
 export type StageItem = {
+  /** Graine 0–1 propre à l'élément : décale les phases et vitesses du mouvement ambiant. */
+  seed: number;
   layer: LayerName;
   z: number;
   active: boolean;
@@ -68,7 +71,7 @@ export type BackdropSpec = {
   angle?: number;
 };
 
-type Globals = { theme: ResolvedTheme; light: UIConfig['light']; quality: UIConfig['quality']; /** 0–1 : mouvement ambiant (0 si mouvement réduit). */ ambient: number };
+type Globals = { theme: ResolvedTheme; light: UIConfig['light']; quality: UIConfig['quality']; /** 0–1 : mouvement ambiant. */ ambient: number; /** Interrupteur du système liquide. */ enabled: boolean; bgKind: ResolvedTheme['bgKind'] };
 
 /* ------------------------------------------------------------------ */
 /* Programme WebGL avec cache d'uniformes                               */
@@ -300,7 +303,7 @@ function frameSig(f: ItemFrame, c: { glue: RGB; glass: RGB; glow: RGB }, tb: num
   const m = f.mat;
   return [
     r2(f.box.x), r2(f.box.y), r2(f.box.w), r2(f.box.h), r2(s.w), r2(s.h), s.r.map(r2).join(','), r2(s.ell), r2(s.path), s.pathKey ?? '',
-    m.glue, m.glow, m.refraction, m.dispersion, m.specular, m.fresnel, m.thickness, m.grain, m.frost, m.iridescence,
+    m.glue, m.glow, m.refraction, m.dispersion, m.specular, m.fresnel, m.thickness, m.grain, m.frost, m.iridescence, m.brightness,
     f.alpha ?? 1, f.variant ?? 1, f.smooth ?? 0, c.glue.map(r2).join(','), c.glass.map(r2).join(','), c.glow.map(r2).join(','),
     (f.blobs ?? []).map((b) => `${r2(b.x)},${r2(b.y)},${r2(b.r)}`).join(';'),
     f.pointer ? `${r2(f.pointer.x)},${r2(f.pointer.y)},${r2(f.pointer.dent)},${r2(f.pointer.press)}` : '',
@@ -330,8 +333,8 @@ type Entry = { item: StageItem; f: ItemFrame; colors: { glue: RGB; glass: RGB; g
  * - `top` : canvas fixe pour la matière des overlays (leur contenu est fixe aussi : aucun décalage possible).
  */
 class Layer {
-  readonly canvas: HTMLCanvasElement;
-  readonly wrapper: HTMLDivElement | null = null;
+  canvas!: HTMLCanvasElement;
+  readonly wrapper: HTMLDivElement | null;
   readonly items = new Set<StageItem>();
   gl: WebGL2RenderingContext | null = null;
   private item!: Prog;
@@ -355,36 +358,86 @@ class Layer {
   backOrigin = Number.NaN;
   prev = new Map<StageItem, { sig: string; b: Rect }>();
 
-  constructor(readonly name: LayerName, private onRestored: () => void) {
-    const c = document.createElement('canvas');
-    c.className = `lq-canvas lq-canvas-${name}`;
-    c.setAttribute('aria-hidden', 'true');
-    this.canvas = c;
+  private watchdog = 0;
+  private tries = 0;
+
+  constructor(readonly name: LayerName, private onRestored: () => void, private onLost: () => void) {
+    this.wrapper = null;
     if (name === 'page') {
       // La bande vit dans le document : le corps doit servir de repère de positionnement.
       if (getComputedStyle(document.body).position === 'static') document.body.style.position = 'relative';
       const w = document.createElement('div');
       w.className = 'lq-strip';
       w.setAttribute('aria-hidden', 'true');
-      w.appendChild(c);
       document.body.appendChild(w);
-      this.wrapper = w;
-    } else document.body.appendChild(c);
+      (this as { wrapper: HTMLDivElement | null }).wrapper = w;
+    }
+    this.attach();
+  }
+
+  /** Crée le canvas et ses écouteurs de perte de contexte. */
+  private attach() {
+    const c = document.createElement('canvas');
+    c.className = `lq-canvas lq-canvas-${this.name}`;
+    c.setAttribute('aria-hidden', 'true');
+    if (this.canvas) this.canvas.remove();
+    this.canvas = c;
+    if (this.wrapper) this.wrapper.appendChild(c);
+    else document.body.appendChild(c);
+    if (this.wrapper) c.style.top = `${this.top}px`;
     c.addEventListener('webglcontextlost', (e) => {
+      // Perte de contexte (GPU saturé, onglet en arrière-plan…) : on cache le rendu GL pour laisser le repli CSS visible,
+      // on laisse le navigateur restaurer, et sinon on recrée le canvas nous-mêmes.
       e.preventDefault();
       this.lost = true;
+      this.onLost();
+      window.clearTimeout(this.watchdog);
+      this.watchdog = window.setTimeout(() => this.recover(), 900);
     });
     c.addEventListener('webglcontextrestored', () => {
+      window.clearTimeout(this.watchdog);
       this.lost = false;
-      this.init();
+      if (this.init()) {
+        this.tries = 0;
+        this.needFull = true;
+        this.backDirty = true;
+        this.onRestored();
+      } else this.recover();
+    });
+  }
+
+  /** Recrée le canvas et le contexte (jusqu'à 6 essais espacés) quand le navigateur ne restaure pas le contexte. */
+  private recover() {
+    if (!this.lost && this.gl) return;
+    this.tries++;
+    if (this.tries > 6) return;
+    this.cssW = 0; // force le redimensionnement du nouveau canvas
+    this.attach();
+    if (this.init()) {
+      this.lost = false;
+      this.tries = 0;
       this.needFull = true;
       this.backDirty = true;
       this.onRestored();
-    });
+    } else {
+      this.lost = true;
+      window.clearTimeout(this.watchdog);
+      this.watchdog = window.setTimeout(() => this.recover(), 1200 * this.tries);
+    }
   }
 
   get ready() {
     return !!this.backTex;
+  }
+
+  /** Masque ou affiche le canvas (interrupteur du système liquide). */
+  setHidden(hidden: boolean) {
+    const el = this.wrapper ?? this.canvas;
+    el.style.display = hidden ? 'none' : '';
+    if (!hidden) {
+      this.needFull = true;
+      this.backDirty = true;
+    }
   }
 
   /** Crée le contexte et les programmes. Renvoie false si WebGL2 est indisponible. */
@@ -476,7 +529,7 @@ class Layer {
     spec: BackdropSpec,
     media: HTMLImageElement | HTMLVideoElement | null,
     mediaVersion: number,
-    geo: { originY: number; tileH: number; docH: number },
+    geo: { originY: number; tileH: number; docH: number; bgKind: ResolvedTheme['bgKind'] },
   ) {
     const gl = this.gl;
     if (!gl || this.lost || this.cssW === 0) return;
@@ -497,7 +550,8 @@ class Layer {
         /* image non lisible (CORS) : repli sur l'environnement */
       }
     }
-    const mode = spec.kind === 'gradient' ? 1 : isMedia && this.imgTex && media ? 2 : 0;
+    // 0 : fond de la couleur du thème ; 3 : uni (noir / blanc cassé ou couleur personnalisée).
+    const mode = spec.kind === 'gradient' ? 1 : isMedia && this.imgTex && media ? 2 : geo.bgKind === 'theme' ? 0 : 3;
     const p = this.backdrop;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.backFbo);
     gl.viewport(0, 0, this.backSize[0], this.backSize[1]);
@@ -617,7 +671,7 @@ class Layer {
 
     const blobs = new Float32Array(MAX_BLOBS * 3);
     const nbData = new Float32Array(8);
-    for (const { f, colors, b } of list) {
+    for (const { item: it, f, colors, b } of list) {
       if (!hits(b, R)) continue;
       const x0 = Math.max(0, b.x);
       const y0 = Math.max(0, b.y);
@@ -678,6 +732,8 @@ class Layer {
       p.set('uMatA', m.glue, m.glow, m.refraction, m.dispersion);
       p.set('uMatB', m.specular, m.fresnel, m.thickness, m.grain);
       p.set('uMatC', m.frost, m.iridescence, f.alpha ?? 1, f.variant ?? 1);
+      p.set('uMatD', m.brightness, 0, 0, 0);
+      p.set('uSeed', it.seed);
       const pt = f.pointer;
       p.set('uPtr', pt?.x ?? -9999, pt?.y ?? -9999, pt?.dent ?? 0, pt?.press ?? 0);
       const rp = f.ripple;
@@ -712,7 +768,7 @@ function smoothTheme(cur: ResolvedTheme, target: ResolvedTheme, k: number): { th
 /** Limite la résolution pour rester sous les plafonds des navigateurs (surtout iOS : ≈ 16 Mpx par canvas). */
 function capDpr(dpr: number, w: number, h: number) {
   const side = 8192 / Math.max(w, h, 1);
-  const area = Math.sqrt(15e6 / Math.max(w * h, 1));
+  const area = Math.sqrt(8e6 / Math.max(w * h, 1));
   return Math.max(1, Math.min(dpr, side, area));
 }
 
@@ -767,11 +823,11 @@ export class Stage {
   };
 
   private stripOk(layer: Layer, sy: number, vh: number, docH: number) {
-    const H = Math.min(docH, Math.ceil(vh * 3));
+    const H = Math.min(docH, Math.ceil(vh * 2.6));
     if (layer.cssH !== H) return false;
     const top = layer.top;
-    const topOk = top <= 0 || sy - top >= vh * 0.3;
-    const botOk = top + H >= docH - 0.5 || sy + vh <= top + H - vh * 0.3;
+    const topOk = top <= 0 || sy - top >= vh * 0.25;
+    const botOk = top + H >= docH - 0.5 || sy + vh <= top + H - vh * 0.25;
     return topOk && botOk && sy >= top && sy + vh <= top + H;
   }
 
@@ -787,10 +843,19 @@ export class Stage {
     if (!this.supported) return null;
     let l = this.layers[name];
     if (!l) {
-      l = new Layer(name, () => {
-        this.backdropDirty = true;
-        this.invalidate();
-      });
+      l = new Layer(
+        name,
+        () => {
+          this.backdropDirty = true;
+          this.invalidate();
+        },
+        () => {
+          // Contexte perdu : le repli CSS reprend la main tant que le rendu GL est indisponible.
+          this.lit = false;
+          document.documentElement.removeAttribute('data-lq-gl');
+        },
+      );
+      if (this.globals && !this.globals.enabled) l.setHidden(true);
       if (!l.init()) {
         l.wrapper?.remove();
         l.canvas.remove();
@@ -818,6 +883,14 @@ export class Stage {
   setGlobals(g: Globals) {
     const prev = this.globals;
     this.globals = g;
+    if (!prev || prev.enabled !== g.enabled) {
+      for (const l of Object.values(this.layers)) l?.setHidden(!g.enabled);
+      if (!g.enabled) {
+        this.lit = false;
+        document.documentElement.removeAttribute('data-lq-gl');
+      }
+    }
+    if (prev && prev.bgKind !== g.bgKind) this.backdropDirty = true;
     if (!prev || prev.theme !== g.theme || prev.light.environment !== g.light.environment) this.backdropDirty = true;
     this.invalidate();
   }
@@ -882,7 +955,7 @@ export class Stage {
 
   private render(t: number, dt: number, gap: number, ambientOnly: boolean): { busy: boolean; visible: boolean } {
     const g = this.globals;
-    if (!g) return { busy: false, visible: false };
+    if (!g || !g.enabled) return { busy: false, visible: false };
     let busy = false;
     let visible = false;
 
@@ -943,9 +1016,9 @@ export class Stage {
       let top = 0;
       if (name === 'page') {
         docH = Math.max(document.documentElement.scrollHeight, vh);
-        H = Math.min(docH, Math.ceil(vh * 3));
+        H = Math.min(docH, Math.ceil(vh * 2.6));
         top = layer.top;
-        if (!this.stripOk(layer, sy, vh, docH)) top = Math.min(Math.max(Math.round(sy - vh), 0), docH - H);
+        if (!this.stripOk(layer, sy, vh, docH)) top = Math.min(Math.max(Math.round(sy - vh * 0.8), 0), docH - H);
       }
       layer.resize(vw, H, capDpr(dpr0, vw, H));
       if (name === 'page' && top !== layer.top) layer.setTop(top);
@@ -960,6 +1033,7 @@ export class Stage {
           originY,
           tileH: Math.max(vh, 640),
           docH,
+          bgKind: g.bgKind,
         });
         layer.needFull = true;
       }
@@ -1058,7 +1132,7 @@ export class Stage {
     }
     this.backdropDirty = false;
 
-    if (!this.lit && Object.values(this.layers).some((l) => l?.gl)) {
+    if (!this.lit && Object.values(this.layers).some((l) => l?.gl && !l.lost)) {
       this.lit = true;
       document.documentElement.setAttribute('data-lq-gl', '1');
     }
@@ -1066,6 +1140,7 @@ export class Stage {
   }
 }
 
+let itemSeq = 1;
 let stage: Stage | null = null;
 /** Singleton client. Renvoie null côté serveur ou si WebGL2 est indisponible. */
 export function getStage(): Stage | null {
@@ -1087,13 +1162,15 @@ export function StageLayer({ layer, z, children }: { layer: LayerName; z: number
 /** Synchronise le thème et la lumière du provider courant avec la scène (si aucun Backdrop ne le fait). */
 function useStageGlobals(force: boolean) {
   const { config, theme, reducedMotion } = useUIContext();
+  // Seule exception volontaire : `motion.respectReducedMotion` (désactivé par défaut) coupe le mouvement ambiant.
   const ambient = reducedMotion && config.motion.respectReducedMotion ? 0 : config.motion.ambient;
+  const enabled = config.enabled;
   useEffect(() => {
     const s = getStage();
     if (!s) return;
     if (force) s.backdropOwner = true;
-    if (force || !s.backdropOwner) s.setGlobals({ theme, light: config.light, quality: config.quality, ambient });
-  }, [config.light, config.quality, theme, force, ambient]);
+    if (force || !s.backdropOwner) s.setGlobals({ theme, light: config.light, quality: config.quality, ambient, enabled, bgKind: theme.bgKind });
+  }, [config.light, config.quality, theme, force, ambient, enabled]);
 }
 
 /**
@@ -1125,7 +1202,7 @@ export function useStageItem(opts: {
     const el0 = ref?.current;
     let depth = 0;
     for (let n: Element | null | undefined = el0; n; n = n.parentElement) depth++;
-    const item: StageItem = { layer, z: z * 1000 + depth, active: !ref, frame: (n, d) => frameRef.current(n, d) };
+    const item: StageItem = { seed: (itemSeq++ * 0.6180339887) % 1, layer, z: z * 1000 + depth, active: !ref, frame: (n, d) => frameRef.current(n, d) };
     const off = s.register(item);
     const el = ref?.current;
     let io: IntersectionObserver | undefined;
@@ -1167,9 +1244,10 @@ export function Backdrop({
   angle?: number;
 }) {
   useStageGlobals(true);
+  const { config } = useUIContext();
   useEffect(() => {
     getStage()?.setBackdrop({ kind, src, from, to, angle }, true);
     return () => getStage()?.setBackdrop({ kind: 'environment' }, false);
   }, [kind, src, from, to, angle]);
-  return <div className="lq-backdrop" aria-hidden="true" data-kind={kind} style={kind === 'gradient' && from && to ? { background: `linear-gradient(${angle ?? 160}deg, ${from}, ${to})` } : undefined} />;
+  return <div className="lq-backdrop" aria-hidden="true" data-kind={kind} data-bg={config.theme.background} style={kind === 'gradient' && from && to ? { background: `linear-gradient(${angle ?? 160}deg, ${from}, ${to})` } : undefined} />;
 }
